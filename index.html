@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>THE LAST LANTERN</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;background:#050507;color:#fff;font-family:monospace;overflow:hidden}
+#game{width:100%;height:100%;display:flex;align-items:center;justify-content:center}
+canvas{image-rendering:pixelated;image-rendering:crisp-edges;max-width:100%;max-height:100%;background:#08090d;border:2px solid #25252d}
+#touch{display:none;position:fixed;bottom:12px;left:12px;gap:5px;z-index:5}
+#touch button{background:#17171e;color:#fff;border:2px solid #555;padding:12px 15px;font:bold 16px monospace}
+@media(max-width:700px){#touch{display:flex;flex-wrap:wrap;width:170px}.touchWide{width:160px}}
+</style>
+</head>
+<body>
+<div id="game"><canvas id="c" width="960" height="540"></canvas></div>
+<div id="touch">
+<button onclick="key('ArrowUp')">▲</button><button onclick="key('ArrowLeft')">◀</button><button onclick="key('ArrowDown')">▼</button><button onclick="key('ArrowRight')">▶</button>
+<button class="touchWide" onclick="key('z')">Z / ENTER</button>
+</div>
+<script>
+const c=document.getElementById("c"),x=c.getContext("2d"); x.imageSmoothingEnabled=false;
+const W=960,H=540;
+let state="title",room="hall",dialog=[],di=0,dialogMode=false,choice=null;
+let player={x:480,y:405,s:3.2},hp=20,maxhp=20,lv=1,gold=0,flags={};
+let enemy=null, battleTurn=0, battleMenu=0, soul={x:480,y:380,s:4}, battleText="",battlePhase="menu",attackTimer=0;
+let particles=[],shake=0;
+
+const rooms={
+hall:{name:"THE DUST HALL",bg:"#10131c",walls:[[70,80,820,18],[70,442,820,18],[70,80,18,380],[872,80,18,380]],exits:[{x:420,y:80,w:120,h:10,to:"garden",tx:480,ty:400}]},
+garden:{name:"THE QUIET GARDEN",bg:"#0b1714",walls:[[55,70,850,18],[55,452,850,18],[55,70,18,382],[887,70,18,382]],exits:[{x:430,y:70,w:100,h:12,to:"hall",tx:480,ty:410},{x:855,y:220,w:45,h:100,to:"archive",tx:110,ty:270}]},
+archive:{name:"THE LOST ARCHIVE",bg:"#151016",walls:[[50,60,860,18],[50,462,860,18],[50,60,18,402],[892,60,18,402]],exits:[{x:50,y:230,w:12,h:90,to:"garden",tx:830,ty:270}]}
+};
+
+function key(k){keys[k]=true;setTimeout(()=>keys[k]=false,80)}
+let keys={};
+addEventListener("keydown",e=>{keys[e.key]=true;if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].includes(e.key))e.preventDefault()});
+addEventListener("keyup",e=>keys[e.key]=false);
+
+function text(lines, after=null){dialog=Array.isArray(lines)?lines:[lines];di=0;dialogMode=true;dialogAfter=after}
+let dialogAfter=null;
+function advance(){
+ if(!dialogMode)return;
+ if(di<dialog.length-1){di++;return}
+ dialogMode=false;let a=dialogAfter;dialogAfter=null;if(a)a();
+}
+addEventListener("keydown",e=>{
+ if((e.key==="z"||e.key==="Z"||e.key==="Enter") && state==="title"){state="intro";return}
+ if((e.key==="z"||e.key==="Z"||e.key==="Enter") && dialogMode){advance();return}
+ if((e.key==="z"||e.key==="Z"||e.key==="Enter") && state==="game"&&!dialogMode){interact();return}
+ if((e.key==="z"||e.key==="Z"||e.key==="Enter") && state==="battle"){battleConfirm();return}
+});
+
+function rect(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y}
+function playerRect(){return{x:player.x-10,y:player.y-10,w:20,h:20}}
+function blocked(nx,ny){
+ let r={x:nx-10,y:ny-10,w:20,h:20};
+ return rooms[room].walls.some(q=>rect(r,{x:q[0],y:q[1],w:q[2],h:q[3]}));
+}
+function updateGame(){
+ let dx=(keys.ArrowRight||keys.d?1:0)-(keys.ArrowLeft||keys.a?1:0);
+ let dy=(keys.ArrowDown||keys.s?1:0)-(keys.ArrowUp||keys.w?1:0);
+ if(dx||dy){let l=Math.hypot(dx,dy);dx/=l;dy/=l}
+ let nx=player.x+dx*player.s,ny=player.y+dy*player.s;
+ if(!blocked(nx,player.y))player.x=nx;if(!blocked(player.x,ny))player.y=ny;
+ for(const e of rooms[room].exits){
+  if(rect(playerRect(),{x:e.x,y:e.y,w:e.w,h:e.h})){room=e.to;player.x=e.tx;player.y=e.ty;return}
+ }
+ if(room==="hall"&&!flags.metLumen&&player.y<180){flags.metLumen=true;text([
+ "A tiny bell rings inside the wall.",
+ "??? : You are early.",
+ "??? : That is unfortunate.",
+ "A pale lantern rolls out from the darkness.",
+ "LUMEN : My name is Lumen. I keep the last light alive.",
+ "LUMEN : If you are here, the Door has noticed you."
+ ])}
+ if(room==="garden"&&!flags.gardenTalk&&player.x>350&&player.x<610&&player.y>300){flags.gardenTalk=true;text([
+ "A stone statue is covered in names.",
+ "LUMEN : Every name here belonged to someone who chose.",
+ "LUMEN : The old kingdom called choice a gift.",
+ "LUMEN : The Door called it fuel."
+ ])}
+}
+function interact(){
+ if(room==="archive"&&player.x<300&&!flags.archive){
+  flags.archive=true;text([
+   "You pull a book from the shelf.",
+   "THE ARCHIVE OF TOMORROW",
+   "It describes a world that never happened.",
+   "At the final page, you find your name.",
+   "Under it: \"DO NOT LET THE LANTERN CHOOSE FOR YOU.\""
+  ]);return;
+ }
+ if(room==="garden"&&player.x>600&&player.y<220&&!flags.fight){
+  flags.fight=true;startBattle("THE WARDEN OF ASHES",34,5);
+ }
+ if(room==="hall"&&flags.metLumen&&player.y>300&&player.x>400&&player.x<560&&!flags.ready){
+  flags.ready=true;text(["LUMEN : The Door is beneath the hall.","LUMEN : Before we go, answer one thing.","LUMEN : If saving everyone meant losing yourself... would you still do it?"],
+  ()=>{choice="save";state="choice"});
+ }
+ if(room==="hall"&&flags.fightDone&&player.y<150){state="ending";ending()}
+}
+
+function startBattle(name,hp,atk){
+ state="battle";enemy={name,hp,maxhp:hp,atk};battleTurn=0;battleMenu=0;battlePhase="menu";battleText="";soul.x=480;soul.y=390;
+}
+function battleConfirm(){
+ if(battlePhase==="message"){battlePhase="menu";return}
+ if(battlePhase==="menu"){
+  if(battleMenu===0){battlePhase="attack";attackTimer=0}
+  else if(battleMenu===1){hp=Math.min(maxhp,hp+6);battleText="You remembered why you came here. HP restored.";battlePhase="message";enemyTurn()}
+  else if(battleMenu===2){battleText="You speak softly. The room listens.";battlePhase="message";if(enemy.name.includes("Warden"))enemy.hp-=3;enemyTurn()}
+  else {flags.spared=true;battleText="You lower your guard.";battlePhase="message";enemyTurn()}
+ }else if(battlePhase==="attack"){let damage=6+lv*2;enemy.hp-=damage;battleText="A clean strike. "+damage+" damage.";battlePhase="message";if(enemy.hp<=0){battlePhase="message";setTimeout(victory,500)}else enemyTurn()}
+}
+function enemyTurn(){
+ if(enemy.hp<=0)return;
+ battleTurn++;setTimeout(()=>{battlePhase="dodge";attackTimer=0;battleText=enemy.name+" attacks! Move the heart.";},350);
+}
+function updateBattle(){
+ if(battlePhase==="dodge"){
+  let dx=(keys.ArrowRight||keys.d?1:0)-(keys.ArrowLeft||keys.a?1:0),dy=(keys.ArrowDown||keys.s?1:0)-(keys.ArrowUp||keys.w?1:0);
+  soul.x+=dx*soul.s;soul.y+=dy*soul.s;soul.x=Math.max(355,Math.min(605,soul.x));soul.y=Math.max(315,Math.min(455,soul.y));
+  attackTimer+=1;
+  if(Math.random()<.025)particles.push({x:360+Math.random()*240,y:310+Math.random()*160,v:2});
+  for(let p of particles){p.x-=p.v;if(Math.abs(p.x-soul.x)<10&&Math.abs(p.y-soul.y)<10){hp--;shake=8}}
+  particles=particles.filter(p=>p.x>330);
+  if(hp<=0){state="gameover";return}
+  if(attackTimer>150){battlePhase="menu";battleText="";particles=[]}
+ }
+}
+function victory(){
+ gold+=12;lv++;flags.fightDone=true;state="game";
+ text(["The Warden's armor falls apart like burnt paper.","WARDEN : You could have destroyed me.","WARDEN : Instead... you gave me an ending.","A hidden staircase opens beneath the hall." ]);
+ player.x=480;player.y=400;room="hall";
+}
+
+function drawText(t,xp,yp,size=22,align="left"){x.font=size+"px monospace";x.textAlign=align;x.fillStyle="#fff";x.fillText(t,xp,yp)}
+function box(xp,yp,w,h){x.fillStyle="#07070b";x.fillRect(xp,yp,w,h);x.strokeStyle="#fff";x.lineWidth=3;x.strokeRect(xp,yp,w,h)}
+function drawTitle(){
+ x.fillStyle="#050507";x.fillRect(0,0,W,H);
+ drawText("THE LAST",480,170,64,"center");drawText("LANTERN",480,240,64,"center");
+ drawText("an original pixel RPG",480,285,20,"center");
+ drawText("PRESS Z / ENTER",480,390,24,"center");
+ drawText("A story about doors, choices, and the things we leave behind.",480,445,15,"center");
+}
+function drawIntro(){
+ x.fillStyle="#050507";x.fillRect(0,0,W,H);
+ drawText("THE WORLD ABOVE HAS FORGOTTEN THE WORLD BELOW.",480,155,20,"center");
+ drawText("Long ago, a kingdom built a Door that could erase pain.",480,220,17,"center");
+ drawText("It worked.",480,250,17,"center");
+ drawText("But every memory it erased became a light.",480,280,17,"center");
+ drawText("And every light needed someone to carry it.",480,310,17,"center");
+ drawText("Tonight, the last carrier disappears.",480,340,17,"center");
+ drawText("You wake beneath the kingdom.",480,380,23,"center");
+ drawText("PRESS Z / ENTER",480,450,20,"center");
+}
+function drawWorld(){
+ let r=rooms[room];x.fillStyle=r.bg;x.fillRect(0,0,W,H);
+ // floor tiles
+ for(let yy=100;yy<440;yy+=32)for(let xx=90;xx<870;xx+=32){x.strokeStyle="rgba(255,255,255,.025)";x.strokeRect(xx,yy,32,32)}
+ for(let q of r.walls){x.fillStyle="#25252d";x.fillRect(...q)}
+ // room details
+ if(room==="hall"){x.fillStyle="#34313b";x.fillRect(420,175,120,18);drawText("THE LAST LIGHT",480,170,14,"center")}
+ if(room==="garden"){for(let i=0;i<15;i++){let px=100+(i*137)%740,py=120+(i*71)%280;x.fillStyle="#203c2d";x.fillRect(px,py,18,30);x.fillRect(px-7,py+12,32,8)}}
+ if(room==="archive"){for(let i=0;i<8;i++){x.fillStyle="#38283b";x.fillRect(120+i*95,100,48,330);for(let j=0;j<5;j++)x.fillRect(125+i*95,110+j*55,38,3)}}
+ // player
+ x.fillStyle="#e9e4d5";x.fillRect(player.x-9,player.y-9,18,18);x.fillStyle="#17131b";x.fillRect(player.x-5,player.y-4,3,3);x.fillRect(player.x+2,player.y-4,3,3);
+ drawText(r.name,20,35,18);drawText("HP "+hp+"/"+maxhp+"   LV "+lv+"   GOLD "+gold,20,515,16);
+ drawText("WASD / ARROWS: move    Z / ENTER: interact",940,515,15,"right");
+ if(dialogMode){box(70,365,820,120);drawText(dialog[di],95,405,18);drawText("Z / ENTER",860,462,13,"right")}
+}
+function drawChoice(){
+ drawWorld();box(180,150,600,250);drawText("What will you do?",480,200,28,"center");
+ drawText("SAVE YOURSELF",480,255,20,"center");drawText("SAVE EVERYONE",480,295,20,"center");
+ drawText("The game remembers.",480,355,15,"center");drawText("Press Z to choose.",480,380,15,"center");
+}
+function drawBattle(){
+ x.fillStyle="#07070b";x.fillRect(0,0,W,H);
+ drawText(enemy.name,55,45,22);drawText("HP "+Math.max(0,enemy.hp)+"/"+enemy.maxhp,55,72,16);
+ // enemy
+ x.fillStyle="#8a8a91";x.beginPath();x.arc(480,170,60,0,Math.PI*2);x.fill();x.fillStyle="#14141a";x.fillRect(450,150,15,10);x.fillRect(495,150,15,10);
+ x.strokeStyle="#fff";x.lineWidth=3;x.strokeRect(330,290,300,180);
+ if(battlePhase==="dodge"){x.fillStyle="#ff3b48";x.fillRect(soul.x-7,soul.y-7,14,14);for(let p of particles){x.fillStyle="#eee";x.fillRect(p.x,p.y,7,7)}}
+ if(battleText)drawText(battleText,480,270,16,"center");
+ if(battlePhase==="menu"){
+  let opts=["FIGHT","ACT","ITEM","SPARE"];for(let i=0;i<4;i++){x.strokeStyle=i===battleMenu?"#fff":"#555";x.strokeRect(80+i*210,485,170,42);drawText(opts[i],165+i*210,512,17,"center")}
+  if(keys.ArrowLeft){battleMenu=(battleMenu+3)%4;keys.ArrowLeft=false}if(keys.ArrowRight){battleMenu=(battleMenu+1)%4;keys.ArrowRight=false}
+ }
+ if(battlePhase==="attack"){drawText("PRESS Z TO STRIKE",480,510,18,"center")}
+ if(battlePhase==="message"){drawText("PRESS Z",480,510,18,"center")}
+}
+function ending(){
+ if(flags.spared)endingType="mercy";else endingType="fire";
+}
+let endingType="fire";
+function drawEnding(){
+ x.fillStyle="#050507";x.fillRect(0,0,W,H);
+ if(endingType==="mercy"){
+  drawText("THE DOOR OPENS.",480,150,36,"center");
+  drawText("Beyond it is not heaven.",480,210,19,"center");
+  drawText("It is a quiet morning.",480,240,19,"center");
+  drawText("The kingdom's lost memories return.",480,270,19,"center");
+  drawText("Lumen becomes a sunrise.",480,330,19,"center");
+  drawText("You walk home carrying no light at all.",480,360,19,"center");
+ }else{
+  drawText("THE DOOR OPENS.",480,150,36,"center");
+  drawText("The last light pours into you.",480,210,19,"center");
+  drawText("The kingdom is saved.",480,240,19,"center");
+  drawText("No one remembers who saved it.",480,270,19,"center");
+  drawText("Except the Door.",480,330,19,"center");
+  drawText("And it whispers your name.",480,360,19,"center");
+ }
+ drawText("THE END",480,430,28,"center");drawText("Refresh the page to play again.",480,470,15,"center");
+}
+function loop(){
+ if(shake){x.save();x.translate((Math.random()-.5)*shake,(Math.random()-.5)*shake);shake*=.8;if(shake<.3)shake=0}
+ if(state==="title")drawTitle();
+ else if(state==="intro")drawIntro();
+ else if(state==="game"){if(!dialogMode)updateGame();drawWorld()}
+ else if(state==="choice")drawChoice();
+ else if(state==="battle"){updateBattle();drawBattle()}
+ else if(state==="ending")drawEnding();
+ else {x.fillStyle="#050507";x.fillRect(0,0,W,H);drawText("YOU FELL.",480,230,40,"center");drawText("Refresh to try again.",480,290,18,"center")}
+ if(shake){x.restore()}
+ requestAnimationFrame(loop)
+}
+loop();
+</script>
+</body>
+</html>
